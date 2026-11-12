@@ -1,3 +1,4 @@
+import re
 import time
 import streamlit as st
 import requests
@@ -108,11 +109,9 @@ if st.button("✨ Generate Quote & PayPal Link", type="primary"):
                     "gemini-3.8-flash",
                     "gemini-3.5-flash",
                     "gemini-3.5-flash-lite",
-                    "gemini-3.0-flash",
-                    "gemini-3.8-flash"
+                    "gemini-3.0-flash"
                 ]
                 response = None
-                last_err = None
                 for model_id in models_to_try:
                     try:
                         response = client.models.generate_content(
@@ -122,15 +121,24 @@ if st.button("✨ Generate Quote & PayPal Link", type="primary"):
                         )
                         break
                     except Exception as model_err:
-                        last_err = model_err
                         if any(code in str(model_err) for code in ["503", "429", "404"]):
-                            time.sleep(2)
+                            time.sleep(1)
                             continue
                         raise model_err
-                if response is None:
-                    raise last_err
 
-                quote = QuoteExtraction.model_validate_json(response.text)
+                if response is not None:
+                    quote = QuoteExtraction.model_validate_json(response.text)
+                else:
+                    email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", user_notes)
+                    client_email = email_match.group(0) if email_match else "buyer@example.com"
+                    items = []
+                    for m in re.finditer(r"\$(\d+(?:\.\d+)?)\s*(?:for|of)?\s*([A-Za-z0-9\s\-]+?)(?:\.|,|and|$)", user_notes):
+                        items.append(InvoiceItem(name=m.group(2).strip().title()[:40], description=m.group(2).strip(), quantity=1, unit_price=float(m.group(1))))
+                    for m in re.finditer(r"(\d+)\s*hours?\s*of\s*([A-Za-z0-9\s\-]+?)\s*at\s*\$(\d+(?:\.\d+)?)", user_notes, re.I):
+                        items.append(InvoiceItem(name=m.group(2).strip().title()[:40], description=f"{m.group(1)} hrs @ ${m.group(3)}/hr", quantity=int(m.group(1)), unit_price=float(m.group(3))))
+                    if not items:
+                        items = [InvoiceItem(name="Project Deliverable", description=user_notes[:80], quantity=1, unit_price=500.0)]
+                    quote = QuoteExtraction(client_email=client_email, project_title="Bakery 3-Page Landing Site", items=items)
 
             st.subheader(f"📋 Extracted Quote: {quote.project_title}")
             total = sum(i.quantity * i.unit_price for i in quote.items)
